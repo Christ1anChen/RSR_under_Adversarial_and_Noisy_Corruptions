@@ -1,3 +1,11 @@
 __pycache__/
-*.pyc
 .env
+*.pyc
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.bmp
+*.webp
+*.txt
