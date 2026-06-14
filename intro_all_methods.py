@@ -93,7 +93,7 @@ if __name__ == "__main__":
     r = 10             # True subspace rank
     r_adv = 2          # Adversarial subspace rank
     N = 1000           # Total sample size
-    K = 10             # Number of independent repetitions per epsilon configuration
+    K = 20             # Number of independent repetitions per epsilon configuration
     base_seed = 2025   # Base random seed
     epsilons = [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]  # Adversarial contamination fractions to sweep over
     
