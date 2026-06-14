@@ -66,7 +66,7 @@ def compute_subspace_distance(V_est, V_true):
     Returns sin(theta_max), where theta_max is the largest principal angle.
     0.0 = Perfect match, 1.0 = Completely orthogonal.
     """
-    # Handle potentially different rank outputs (e.g., from RANSAC+)
+    # Handle potentially different rank outputs
     if V_est.shape[1] != V_true.shape[1]:
         # If ranks mismatch, compute distance via projection operator norms
         P_est = V_est @ V_est.T
