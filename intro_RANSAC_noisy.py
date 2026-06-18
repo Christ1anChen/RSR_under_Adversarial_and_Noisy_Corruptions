@@ -1,70 +1,147 @@
-# Intro: compare RANSAC+ with RANSAC under different Gaussian noise intensity $\sigma^2$
-# 
-from RSR_methods import *
+# ==============================================================================
+# Introduction: compare RANSAC+ with RANSAC under different Gaussian noise intensity $\sigma^2$
+# ==============================================================================
+import numpy as np
+import matplotlib.pyplot as plt
+from RSR_methods import RANSAC, RANSAC_PLUS
+from intro_all_methods import generate_adversarial_toy_data, compute_subspace_distance
 
-# Set random seed
-np.random.seed(2024)
 
-# Parameters
-d = 100  # ambient dimension
-n = 500  # sample size
-r = 10  # dimension of subspace
+# ==============================================================================
+# CONFIGURATION PARAMETERS
+# ==============================================================================
+base_seed = 2024
+np.random.seed(base_seed)
+d = 100       # Ambient dimension
+n = 1000      # Sample size
+r = 10        # Target subspace dimension
+r_adv = 2     # Adversarial contamination rank
+eps = 0.2     # Adversarial corruption rate
+K = 20        # Number of repetitions
 
-# True covariance
-O = sp.stats.ortho_group.rvs(d)
-U = O[:, :r]
-Up = O[:, r:]
-proj_true = U@U.T  # true projection operator
-D = [1]*r
-D = np.diag(D)
-Sig = U@D@U.T
-
-# Record error and runtime under different noise levels
 sig2_tab = [1e-4, 1e-3, 1e-2, 1e-1]
-eps = 0.2  # adversarial corruption rate
-K = 20  # number of repetitions
-error_tab = []  # error table
-time_tab = []  # runtime table
+methods = ["RANSAC", "RANSAC+"]
 
-# Main loop
-for sig2 in sig2_tab:
-    error_row = []
-    time_row = []
-    for i in range(K):  # repeat for K times
+# Metric storage matrices: shape (len(sig2_tab), K, len(methods))
+error_tab = np.zeros((len(sig2_tab), K, len(methods)))
+time_tab = np.zeros((len(sig2_tab), K, len(methods)))
+
+
+# ==============================================================================
+# MAIN EXPERIMENTAL LOOP
+# ==============================================================================
+print("=" * 90)
+print(f"STARTING COMPARATIVE NOISE SWEEP (K={K} TRIALS)")
+print("=" * 90)
+
+for idx_sig, sig2 in enumerate(sig2_tab):
+    print(f"\nEvaluating Noise Level sigma^2 = {sig2}")
+
+    for trial in range(K):  # repeat for K times
+        current_seed = base_seed + trial
+        rng = np.random.default_rng(current_seed)
         error_lis = []
         time_lis = []
-        # Generate (eps, Sig_xi)-corrupted sample set
-        X = np.random.multivariate_normal(np.zeros(d), Sig, n)
-        Xc, cind = acr(X, Up, eps)
-        Xc = gn(Xc, sig_2=sig2)
-        # Empirical (PCA)
-        _, S, ceigvecs = np.linalg.svd(Xc, full_matrices=False)
-        ceigvecs = ceigvecs.T
-        error_lis.append(np.linalg.norm(ceigvecs[:, :r]@ceigvecs[:, :r].T - proj_true))
-        # RANSAC
-        V_RANSAC, flag, runtime_ransac = RANSAC(Xc, r, tau=0.1, T_max=1e6)
-        error_lis.append(np.linalg.norm(V_RANSAC@V_RANSAC.T - proj_true))
-        time_lis.append(runtime_ransac)
-        # RANSAC+
-        th = 0.1
-        st = 1.
-        V_fp, resid, runtime_fp = First_Phase(Xc, th, st)
-        pXc = Xc@V_fp  # projection
-        rec, ind_tab, eigs_tab, runtime_sp = Second_Phase(pXc, T_min=1e1, T_max=1e6, eps=eps)
-        print(rec[:r+2])
-        res_V, runtime_pp = Post_Process(pXc, V_fp, rec, ind_tab, eigs_tab)
-        error_lis.append(np.linalg.norm(res_V@res_V.T - proj_true))
-        time_lis.append(runtime_fp+runtime_sp+runtime_pp)
-        print(sig2, i, error_lis, time_lis)
-        # Record error and runtime
-        error_row.append(error_lis)
-        time_row.append(time_lis)
-    # Record error and runtime
-    error_tab.append(error_row)
-    time_tab.append(time_row)
-error_tab = np.asarray(error_tab)
-time_tab = np.asarray(time_tab)
 
-# Save
-np.save("error_tab_RANSAC_noisy.npy", error_tab)
-np.save("time_tab_RANSAC_noisy.npy", time_tab)
+        # Generate (eps, Sig_xi)-corrupted sample set
+        X, V_true = generate_adversarial_toy_data(
+            d=d, r=r, r_adv=r_adv, N=n, epsilon=eps, seed=base_seed+trial
+            )
+        
+        # Add zero-mean isotropic Gaussian noise matrix
+        if sig2 > 0.0:
+            gaussian_noise = rng.normal(0.0, np.sqrt(sig2/d), size=X.shape)   # Covariance matrix is (sig2/d)*I_d
+            gn_X = X + gaussian_noise
+        else:
+            gn_X = X.copy()
+        print(f"Trial {trial+1}/{K} for eps={eps:.2f}, sig^2={sig2:.1e} - Data generated with seed {base_seed+trial}")
+
+        # --- Standard RANSAC ---
+        V_RANSAC, _, t_ransac = RANSAC(gn_X, d=r, T_max=10000, threshold=0.01)
+        error_tab[idx_sig, trial, 0] = compute_subspace_distance(V_RANSAC, V_true)
+        time_tab[idx_sig, trial, 0] = t_ransac
+
+
+        # --- RANSAC+ ---
+        th = np.maximum(2.0 * np.sqrt(sig2), 0.01)
+        V_ran, _, t_ran = RANSAC_PLUS(gn_X, th, st=1.0, eps=eps, T_max=10000)
+        error_tab[idx_sig, trial, 1] = compute_subspace_distance(V_ran, V_true)
+        time_tab[idx_sig, trial, 1] = t_ran
+
+    # Log progress summary to console
+    avg_errs = np.median(error_tab[idx_sig], axis=0)
+    print(f"--> [Median sin theta] RANSAC: {avg_errs[0]:.4e} | RANSAC+: {avg_errs[1]:.4e}")
+
+# Save data
+np.save("saved_data/error_tab_RANSAC_noisy.npy", error_tab)
+np.save("saved_data/time_tab_RANSAC_noisy.npy", time_tab)
+
+
+# ==============================================================================
+# DATA AGGREGATION & VISUALIZATION
+# ==============================================================================
+# Define the proportion to cut from BOTH the bottom and top boundaries
+# 0.20 means we drop the lowest 20% and highest 20% of trials (inner 60% kept)
+lower_quantile = 0.2
+upper_quantile = 0.8
+
+# Matrices to hold the robust statistics
+mean_errors = np.zeros((len(sig2_tab), len(methods)))
+std_errors = np.zeros((len(sig2_tab), len(methods)))
+
+for idx_sig in range(len(sig2_tab)):
+    for idx_m in range(len(methods)):
+        # Extract the K trials for this specific noise level and method
+        trial_results = error_tab[idx_sig, :, idx_m]
+        
+        # Calculate the explicit value cutoffs for the quantiles
+        q_low = np.percentile(trial_results, lower_quantile * 100)
+        q_high = np.percentile(trial_results, upper_quantile * 100)
+        
+        # Slices out any trial that falls outside our valid quantile bounds
+        trimmed_trials = trial_results[(trial_results >= q_low) & (trial_results <= q_high)]
+        
+        # Record the robust mean and standard deviation of the remaining inner trials
+        mean_errors[idx_sig, idx_m] = np.mean(trimmed_trials)
+        std_errors[idx_sig, idx_m] = np.std(trimmed_trials)
+
+# Plot
+plt.figure(figsize=(10, 6), dpi=100)
+
+markers = ["x", "o"]  # "D" "s"
+line_styles = ["--", "-"]  # ":"
+colors = [ "#1f77b4", "#d62728"]
+
+for idx_m, method in enumerate(methods):
+    plt.errorbar(
+        sig2_tab, 
+        mean_errors[:, idx_m], 
+        yerr=std_errors[:, idx_m],
+        marker=markers[idx_m], 
+        linestyle=line_styles[idx_m],
+        color=colors[idx_m],
+        linewidth=2.0, 
+        markersize=8, 
+        capsize=8,          # Length of the error bar cross-caps
+        capthick=2.0,       # Thickness of the error bar cross-caps
+        elinewidth=2.0,     # Thickness of the vertical error bar line
+        alpha=0.8,          # Slight transparency to avoid visual clutter when bars overlap
+        label=method
+    )
+
+# Formatting the plot
+plt.xlabel(r"Gaussian Noise Intensity ($\sigma^2$)", fontsize=15, labelpad=10)
+plt.ylabel(r"Distance from the True Subspace ($\| \text{P}_{\widehat{S}} - \text{P}_{S^\star} \|$)", fontsize=15, labelpad=10)
+
+plt.xscale("log")
+plt.yscale("log")
+plt.xticks(sig2_tab)
+plt.grid(True, linestyle="--", alpha=0.5, which="both")
+
+plt.legend(fontsize=15, loc="best", frameon=True, shadow=False)
+plt.tight_layout()
+
+# Save image
+plt.savefig("Pics/intro_RANSAC_noisy.png", dpi=300)
+print("--> Evaluation line plot saved as 'Pics/intro_RANSAC_noisy.png'")
+plt.show()
