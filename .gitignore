@@ -9,3 +9,4 @@ __pycache__/
 *.bmp
 *.webp
 *.txt
+*.npy
