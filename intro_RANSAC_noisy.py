@@ -13,7 +13,7 @@ from intro_all_methods import generate_adversarial_toy_data, compute_subspace_di
 base_seed = 2024
 np.random.seed(base_seed)
 d = 100       # Ambient dimension
-n = 1000      # Sample size
+n = 500       # Sample size
 r = 10        # Target subspace dimension
 r_adv = 2     # Adversarial contamination rank
 eps = 0.2     # Adversarial corruption rate
@@ -57,13 +57,13 @@ for idx_sig, sig2 in enumerate(sig2_tab):
         print(f"Trial {trial+1}/{K} for eps={eps:.2f}, sig^2={sig2:.1e} - Data generated with seed {base_seed+trial}")
 
         # --- Standard RANSAC ---
-        V_RANSAC, _, t_ransac = RANSAC(gn_X, d=r, T_max=10000, threshold=0.01)
+        V_RANSAC, _, t_ransac = RANSAC(gn_X, d=r, T_max=10000, threshold=0.1)
         error_tab[idx_sig, trial, 0] = compute_subspace_distance(V_RANSAC, V_true)
         time_tab[idx_sig, trial, 0] = t_ransac
 
 
         # --- RANSAC+ ---
-        th = np.maximum(2.0 * np.sqrt(sig2), 0.01)
+        th = np.maximum(2.0 * np.sqrt(sig2), 0.1)
         V_ran, _, t_ran = RANSAC_PLUS(gn_X, th, st=1.0, eps=eps, T_max=10000)
         error_tab[idx_sig, trial, 1] = compute_subspace_distance(V_ran, V_true)
         time_tab[idx_sig, trial, 1] = t_ran
@@ -80,52 +80,33 @@ np.save("saved_data/time_tab_RANSAC_noisy.npy", time_tab)
 # ==============================================================================
 # DATA AGGREGATION & VISUALIZATION
 # ==============================================================================
-# Define the proportion to cut from BOTH the bottom and top boundaries
-# 0.20 means we drop the lowest 20% and highest 20% of trials (inner 60% kept)
-lower_quantile = 0.2
-upper_quantile = 0.8
-
-# Matrices to hold the robust statistics
-mean_errors = np.zeros((len(sig2_tab), len(methods)))
-std_errors = np.zeros((len(sig2_tab), len(methods)))
+errors = np.zeros((len(sig2_tab), len(methods)))
 
 for idx_sig in range(len(sig2_tab)):
     for idx_m in range(len(methods)):
-        # Extract the K trials for this specific noise level and method
+        # Extract the K trials for this specific configuration
         trial_results = error_tab[idx_sig, :, idx_m]
         
-        # Calculate the explicit value cutoffs for the quantiles
-        q_low = np.percentile(trial_results, lower_quantile * 100)
-        q_high = np.percentile(trial_results, upper_quantile * 100)
-        
-        # Slices out any trial that falls outside our valid quantile bounds
-        trimmed_trials = trial_results[(trial_results >= q_low) & (trial_results <= q_high)]
-        
-        # Record the robust mean and standard deviation of the remaining inner trials
-        mean_errors[idx_sig, idx_m] = np.mean(trimmed_trials)
-        std_errors[idx_sig, idx_m] = np.std(trimmed_trials)
+        # Track the median subspace distance error recorded
+        errors[idx_sig, idx_m] = np.median(trial_results)
 
-# Plot
+# --- PLOTTING ENVIRONMENT ---
 plt.figure(figsize=(10, 6), dpi=100)
 
-markers = ["x", "o"]  # "D" "s"
-line_styles = ["--", "-"]  # ":"
-colors = [ "#1f77b4", "#d62728"]
+markers = ["x", "o"]
+line_styles = ["--", "-"]
+colors = ["#1f77b4", "#d62728"]
 
 for idx_m, method in enumerate(methods):
-    plt.errorbar(
+    plt.plot(
         sig2_tab, 
-        mean_errors[:, idx_m], 
-        yerr=std_errors[:, idx_m],
+        errors[:, idx_m], 
         marker=markers[idx_m], 
         linestyle=line_styles[idx_m],
         color=colors[idx_m],
-        linewidth=2.0, 
-        markersize=8, 
-        capsize=8,          # Length of the error bar cross-caps
-        capthick=2.0,       # Thickness of the error bar cross-caps
-        elinewidth=2.0,     # Thickness of the vertical error bar line
-        alpha=0.8,          # Slight transparency to avoid visual clutter when bars overlap
+        linewidth=3.0, 
+        markersize=10, 
+        alpha=0.9,
         label=method
     )
 
@@ -145,3 +126,4 @@ plt.tight_layout()
 plt.savefig("Pics/intro_RANSAC_noisy.png", dpi=300)
 print("--> Evaluation line plot saved as 'Pics/intro_RANSAC_noisy.png'")
 plt.show()
+
