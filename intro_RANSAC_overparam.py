@@ -46,7 +46,7 @@ for idx_r, r in enumerate(tab_r):
         )
 
         # --- Standard RANSAC (Overparameterized by 1) ---
-        V_RANSAC, _, t_ransac = RANSAC(X, d=r+1, T_max=10000000, threshold=0.1)
+        V_RANSAC, _, t_ransac = RANSAC(X, d=r+1, T_max=1000000, threshold=0.1)
         error_tab[idx_r, trial, 0] = compute_subspace_distance(V_RANSAC, V_true)
         time_tab[idx_r, trial, 0] = t_ransac
 
@@ -66,6 +66,7 @@ for idx_r, r in enumerate(tab_r):
 np.save("saved_data/error_tab_RANSAC_overparam.npy", error_tab)
 np.save("saved_data/time_tab_RANSAC_overparam.npy", time_tab)
 print("\n--> Overparameterization benchmarking tracking completed and saved to disk.")
+
 
 # ==============================================================================
 # DATA AGGREGATION & VISUALIZATION
