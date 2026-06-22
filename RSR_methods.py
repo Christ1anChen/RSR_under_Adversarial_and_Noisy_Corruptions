@@ -6,7 +6,7 @@ from time import perf_counter
 
 # RANSAC+ (Chen, Ma & Fattahi 2025)
 # 
-def RANSAC_PLUS(X, th=1.0, st=2.0, eps=0.25, T_min=100, T_max=100000, fp=False):
+def RANSAC_PLUS(X, th=1.0, st=2.0, eps=0.25, T_min=100, T_max=int(1e6), fp=False):
     """
     Robustly identifies a low-dimensional subspace from adversarial/noisy data.
     Automatically determines the intrinsic rank of the subspace.
@@ -85,52 +85,78 @@ def RANSAC_PLUS(X, th=1.0, st=2.0, eps=0.25, T_min=100, T_max=100000, fp=False):
     r_ = pX.shape[0]
     print(f"RANSAC+ Phase 1 completed with coarse dimension r'={r_}")
     
-    B_sec = int(2 * r_)  # 2 * r_ / (1 - eps)
+    B_sec = int(r_ / (1 - 2*eps))  # 2 * r_ / (1 - eps)
     print(f"RANSAC+ Phase 2 Batch Size (B): {B_sec}")
     
-    T_target = int((1 / (1 - 1.1 * eps))**B_sec)
+    T_target = int((1 / (1 - eps))**B_sec)  # 1.1 * 
     T = np.clip(T_target, T_min, T_max)
     print(f"RANSAC+ Phase 2 Total Number of Batches (T): {T}")
     
     rec = np.full(r_, np.inf)
-    ind_tab = np.zeros((T, B_sec), dtype=int)
     eigs_tab = np.zeros((T, r_))
-    
+
+    # Pre-allocate random indices all at once outside the loop to avoid calling rng.choice T times
+    ind_tab = np.array([rng.choice(N, B_sec, replace=False) for _ in range(T)])
+
     for t in range(T):
-        batch_ind = rng.choice(N, B_sec, replace=False)
-        vals = np.linalg.svd(pX[:, batch_ind], compute_uv=False)
-        eigs = (vals**2) / B_sec
+        batch_ind = ind_tab[t]
+        X_sub = pX[:, batch_ind]
         
-        ind_tab[t] = batch_ind
-        eigs_tab[t, :len(eigs)] = eigs
-        rec = np.minimum(rec, eigs[:r_])
+        # Compute the small (r_ x r_) Gram matrix
+        Gram = (X_sub @ X_sub.T) / B_sec
+        
+        # Compute eigenvalues directly on the small Gram matrix for efficiency
+        raw_vals = np.linalg.eigvalsh(Gram)[::-1] 
+        eigs = np.maximum(raw_vals, 0.0)  # Ensure non-negativity
+        
+        eigs_truncated = eigs[:r_]
+        eigs_tab[t, :len(eigs_truncated)] = eigs_truncated
+        rec = np.minimum(rec, eigs_truncated)
         
     # PHASE 3: Rank Determination & Lifting
-    denom = np.where(rec[:-1] > 1e-12, rec[:-1], 1e-12)
-    decay_ratios = rec[1:] / denom
+    # denom = np.where(rec[:-1] > 1e-12, rec[:-1], 1e-12)
+    # decay_ratios = rec[1:] / denom
     print("Eigenvalues of the best recorded:", rec)
 
-    # Condition: The eigenvalue after the drop must be less than the threshold
-    condition = (rec[1:] < th)
+
+    # Condition: The eigenvalue must drop below your adaptive noise threshold
+    th2 = max(th, 1e-4)  # Ensure a reasonable lower bound on the threshold  # / np.sqrt(D)
+    condition = (rec[1:] < th2)
 
     if np.any(condition):
-        # Filter out ratios that don't land below the noise threshold
-        restricted_ratios = np.where(condition, decay_ratios, np.inf)
-        r = int(np.argmin(restricted_ratios) + 1)
+        # Find the FIRST index where the energy drops below the noise floor
+        # +1 maps the 0-based index of rec[1:] back to the actual rank dimension
+        r = int(np.where(condition)[0][0] + 1)
+        print(f"--> Noise threshold reached. Stopping rank selection at r = {r}")
     else:
-        # If every single eigenvalue is large, no noise floor was captured; the rank is full
+        # If every single eigenvalue is large, the entire coarse space is full of signal energy
         print("--> All dimensions contain high energy. Setting rank to full coarse dimension.")
         r = int(r_)
 
-    # Determine the target index for the (r+1)-th eigenvalue
+    # Determine the target index for evaluating the best batch matrix
     eval_idx = r
+
+    # # Condition: The eigenvalue after the drop must be less than the threshold
+    # condition = (rec[1:] < th)
+
+    # if np.any(condition):
+    #     # Filter out ratios that don't land below the noise threshold
+    #     restricted_ratios = np.where(condition, decay_ratios, np.inf)
+    #     r = int(np.argmin(restricted_ratios) + 1)
+    # else:
+    #     # If every single eigenvalue is large, no noise floor was captured; the rank is full
+    #     print("--> All dimensions contain high energy. Setting rank to full coarse dimension.")
+    #     r = int(r_)
+
+    # # Determine the target index for the (r+1)-th eigenvalue
+    # eval_idx = r
     
     # Boundary Protection: If estimated rank equals the total available dimensions,
     # there is no (r+1)-th eigenvalue. We must fall back to the last available component.
-    if eval_idx >= eigs_tab.shape[1]:
+    if eval_idx >= r_:
+        eval_idx_safe = r_ - 1
         print(f"--> Rank r={r} is full. No (r+1)-th eigenvalue exists. Falling back to maximizing the r-th component.")
-        eval_idx = eigs_tab.shape[1] - 1
-        best_batch_idx = eigs_tab[:, eval_idx].argmax()
+        best_batch_idx = eigs_tab[:, eval_idx_safe].argmax()
     else:
         # Pick the batch that MINIMIZES the (r+1)-th eigenvalue (the noise floor)
         best_batch_idx = eigs_tab[:, eval_idx].argmin()
@@ -148,8 +174,8 @@ def RANSAC_PLUS(X, th=1.0, st=2.0, eps=0.25, T_min=100, T_max=100000, fp=False):
     proj_sq_norms = np.sum((U_seed.T @ pX)**2, axis=0)
     projected_dists = np.sqrt(np.maximum(pX_sq_norms - proj_sq_norms, 0))
     
-    # Aggregate all sample indices bounded by the threshold 'th'
-    aggregated_indices = np.where(projected_dists <= th)[0]
+    # Aggregate all sample indices bounded by the threshold 'th2'
+    aggregated_indices = np.where(projected_dists <= th2/np.sqrt(D))[0]
     
     # Extract the refined basis from the pooled projected consensus set
     if len(aggregated_indices) >= r:
@@ -159,7 +185,8 @@ def RANSAC_PLUS(X, th=1.0, st=2.0, eps=0.25, T_min=100, T_max=100000, fp=False):
         # Using fast Truncated SVD to strictly pull the top-r ambient components
         try:
             # Setting ncv to give the Arnoldi engine ample search room
-            res_vecs, S_final, _ = svds(X_consensus, k=r, ncv=np.clip(4*r, 40, D-1), tol=1e-5)
+            ncv_val = int(np.clip(4 * r, r + 2, min(D - 1, X_consensus.shape[1] - 1)))
+            res_vecs, S_final, _ = svds(X_consensus, k=r, ncv=ncv_val, tol=1e-5)
              
             # Sort descending so column 0 is the absolute dominant principal component
             sort_idx = np.argsort(S_final)[::-1]
@@ -440,7 +467,7 @@ def STE(X, d, T_max=100, tau=1e-4, gamma=1e-3):
 
 # Fast Median Subspace (FMS_p)
 #
-def FMS(X, d, p=1.0, T_max=10, tau=1e-4, epsilon=1e-10):
+def FMS(X, d, p=1.0, T_max=100, tau=1e-4, epsilon=1e-10):
     """
     Fast Median Subspace (FMS_p)
     Based on Lerman & Maunu, I&I 2018: "Fast, Robust and Non-convex Subspace Recovery"
@@ -618,7 +645,7 @@ def GGD(X, d, s=1.0, tau=1e-4, K=10, T_max=100):
 
 # Classic RANSAC for Robust Subspace Recovery
 #
-def RANSAC(X, d, T_max=1000, threshold=0.1, max_attempts=100):
+def RANSAC(X, d, T_max=1000, threshold=0.1, max_attempts=1000):
     """
     RANSAC for Robust Subspace Recovery
     based on Maunu & Lerman, 2019: "Robust Subspace Recovery with Adversarial Outliers"
@@ -696,7 +723,7 @@ def RANSAC(X, d, T_max=1000, threshold=0.1, max_attempts=100):
             pass  # Fallback to the unrefined best_V if numerical edge-case fails
     
     run_time = perf_counter() - t_start
-    print(f"RANSAC finished with {max_inliers} inliers, time taken: {run_time:.4f} seconds")
+    print(f"RANSAC finished with {max_inliers} inliers, {attempts} attempts, {valid_iters} valid iterations, time taken: {run_time:.4f} seconds")
 
     return best_V, max_inliers, run_time
 
