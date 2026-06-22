@@ -126,7 +126,7 @@ class VideoSubspaceRecoveryFramework:
             if th is None:
                 if self.sigma_array is None:
                     self.estimate_pixelwise_noise()
-                th = np.sqrt(np.sum(self.sigma_array**2))
+                th = np.sqrt(np.sum(self.sigma_array**2) / 2)
                 print(f"--> Auto-calculated stopping threshold (via 200-frame sample): {th:.4f}")
             else:
                 print(f"--> Using manual stopping threshold: {th}")
@@ -184,9 +184,9 @@ class VideoSubspaceRecoveryFramework:
         fg = self.Foreground[:, frame_number].reshape(self.original_shape)
         
         fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-        axes[0].imshow(orig, cmap='gray'); axes[0].set_title(f"Original Frame #{frame_number}"); axes[0].axis('off')
-        axes[1].imshow(bg, cmap='gray'); axes[1].set_title("Recovered Background"); axes[1].axis('off')
-        axes[2].imshow(fg, cmap='hot'); axes[2].set_title("Recovered Foreground"); axes[2].axis('off')  # (Outliers)
+        axes[0].imshow(orig, cmap='gray'); axes[0].set_title(f"Original Frame #{frame_number}", fontsize=15); axes[0].axis('off')
+        axes[1].imshow(bg, cmap='gray'); axes[1].set_title("Recovered Background", fontsize=15); axes[1].axis('off')
+        axes[2].imshow(fg, cmap='hot'); axes[2].set_title("Recovered Foreground", fontsize=15); axes[2].axis('off')  # (Outliers)
         
         plt.tight_layout()
         plt.show()
@@ -414,15 +414,15 @@ class CDnetEvaluator:
         fig, axes = plt.subplots(1, 3, figsize=(15, 5))
         
         axes[0].imshow(binary_gt, cmap='gray')
-        axes[0].set_title(f"Ground Truth #{frame_number}", fontsize=12)
+        axes[0].set_title(f"Ground Truth #{frame_number}", fontsize=15)
         axes[0].axis('off')
         
         axes[1].imshow(clean_binary_2d, cmap='gray')
-        axes[1].set_title("Generated Binary Mask", fontsize=12)
+        axes[1].set_title("Generated Binary Mask", fontsize=15)
         axes[1].axis('off')
         
         axes[2].imshow(debug_img)
-        axes[2].set_title("Error Map", fontsize=12)  # (Red = False Positives, Green = True Positives, Blue = False Negatives)
+        axes[2].set_title("Error Map", fontsize=15)  # (Red = False Positives, Green = True Positives, Blue = False Negatives)
         axes[2].axis('off')
         
         plt.tight_layout()
@@ -465,7 +465,7 @@ if __name__ == "__main__":
     # framework.save_output_video()
 
     # --- Example 2: Using CDnet dataset ---
-    dataset_folder = "./CDnet/badWeather/snowFall"   # cameraJitter/sidewalk or badWeather/snowFall
+    dataset_folder = "./CDnet/badWeather/snowFall"
     input_folder = os.path.join(dataset_folder, "input")
     roi_txt_path=os.path.join(dataset_folder, "temporalROI.txt")
     _, end_frame = CDnetEvaluator.read_temporal_roi(roi_txt_path)
@@ -477,7 +477,7 @@ if __name__ == "__main__":
             target_height=480,
             max_frames=end_frame
         )
-        cdnet_framework.run_experiment(method_func=None, eps=0.4)  # method_func=None, STE, FMS, GGD, RPCA
+        cdnet_framework.run_experiment(method_func=None, eps=0.4)  # method_func=None, STE, FMS, GGD, RPCA, eps=0.4, r=5
         cdnet_framework.visualize_frame(frame_number=900)
         CDnetEvaluator.plot_error_map(cdnet_framework, frame_number=900, gt_path=os.path.join(dataset_folder, "groundtruth", "gt000900.png"), multiplier=5, kernel_size=5)
         cdnet_framework.visualize_frame(frame_number=1200)
